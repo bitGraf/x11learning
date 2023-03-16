@@ -1,6 +1,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysymdef.h>
+#include <GL/glx.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <unistd.h>
@@ -21,14 +22,60 @@ int main(int argc, char** argv) {
     screen = DefaultScreenOfDisplay(display);
     screenId = DefaultScreen(display);
 
+    // Check GLX version
+    GLint majorGLX, minorGLX = 0;
+    glXQueryVersion(display, &majorGLX, &minorGLX);
+    if (majorGLX <= 1 && minorGLX < 2) {
+        printf("GLX 1.2 or greater is required.\n");
+        XCloseDisplay(display);
+        return 1;
+    } else {
+        printf("GLX version: %d.%d\n", majorGLX, minorGLX);
+    }
+
+    GLint glxAttribs[] = {
+        GLX_RGBA,
+        GLX_DOUBLEBUFFER,
+        GLX_DEPTH_SIZE,     24,
+        GLX_STENCIL_SIZE,   8,
+        GLX_RED_SIZE,       8,
+        GLX_GREEN_SIZE,     8,
+        GLX_BLUE_SIZE,      8,
+        GLX_SAMPLE_BUFFERS, 0,
+        GLX_SAMPLES,        0,
+        None
+    };
+    XVisualInfo* visual = glXChooseVisual(display, screenId, glxAttribs);
+
+    if (visual == 0) {
+        printf("Could not create correct visual window.\n");
+        XCloseDisplay(display);
+        return 1;
+    }
+
     // Open the window
-    window = XCreateSimpleWindow(
+    XSetWindowAttributes windowAttribs;
+    windowAttribs.border_pixel = BlackPixel(display, screenId);
+    windowAttribs.background_pixel = WhitePixel(display, screenId);
+    windowAttribs.override_redirect = True;
+    windowAttribs.colormap = XCreateColormap(display, RootWindow(display, screenId), visual->visual, AllocNone);
+    windowAttribs.event_mask = ExposureMask;
+    window = XCreateWindow(
         display, 
-        RootWindowOfScreen(screen), 
-        0, 0, 320, 200, 
-        1, 
-        BlackPixel(display, screenId), 
-        WhitePixel(display, screenId));
+        RootWindow(display, screenId), 
+        0, 0, 340, 200, 0, 
+        visual->depth, InputOutput, 
+        visual->visual, CWBackPixel | CWColormap | CWBorderPixel | CWEventMask, 
+        &windowAttribs);
+
+    // Create GLX OpenGL context
+    GLXContext context = glXCreateContext(display, visual, NULL, GL_TRUE);
+    glXMakeCurrent(display, window, context);
+
+    printf("GL Vendor: %s\n", glGetString(GL_VENDOR));
+    printf("GL Renderer: %s\n", glGetString(GL_RENDERER));
+    printf("GL Version: %s\n", glGetString(GL_VERSION));
+    printf("GL Shading Language: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
 
     // subscribe to certain events
     XSelectInput(display, window, 
@@ -44,6 +91,9 @@ int main(int argc, char** argv) {
     // Show the window
     XClearWindow(display, window);
     XMapRaised(display, window);
+
+    // Set GL Sample stuff
+    glClearColor(0.5f, 0.6f, 0.7f, 1.0f);
 
     // get window attributes
     XWindowAttributes attribs;
@@ -75,6 +125,7 @@ int main(int argc, char** argv) {
                     height = ev.xconfigure.height;
 
                     printf("Window width:  %d\n       height: %d\n", width, height);
+                    glViewport(0, 0, width, height);
                 }
             } break;
 
@@ -117,11 +168,31 @@ int main(int argc, char** argv) {
                 }
             } break;
         }
+
+        // OpenGL Rendering
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glBegin(GL_TRIANGLES);
+            glColor3f(  1.0f,  0.0f, 0.0f);
+            glVertex3f( 0.0f, -1.0f, 0.0f);
+            glColor3f(  0.0f,  1.0f, 0.0f);
+            glVertex3f(-1.0f,  1.0f, 0.0f);
+            glColor3f(  0.0f,  0.0f, 1.0f);
+            glVertex3f( 1.0f,  1.0f, 0.0f);
+        glEnd();
+
+        // Present frame
+        glXSwapBuffers(display, window);
     }
 
-    // Cleanup
+    // Cleanup GLX
+    glXDestroyContext(display, context);
+
+    // Cleanup X11
+    XFree(visual);
+    XFreeColormap(display, windowAttribs.colormap);
     XDestroyWindow(display, window);
-    //XFree(screen);
     XCloseDisplay(display);
+    
     return 1;
 }
